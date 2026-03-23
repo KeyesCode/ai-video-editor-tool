@@ -17,44 +17,50 @@ def _get_duration(video_path: str) -> float:
     return float(result.stdout.strip())
 
 
-def _extract_segment(video_path: str, start: float, end: float, output_path: str):
-    """Extract a segment from a video using FFmpeg."""
-    duration = end - start
-    cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(start),
-        "-i", video_path,
-        "-t", str(duration),
-        "-map", "0:v:0", "-map", "0:a:0",
+def _build_filter_complex(num_segments: int) -> str:
+    """Build FFmpeg filter_complex string to normalize and concat segments."""
+    filters = []
+    for i in range(num_segments):
+        # Scale to 1080p, handle rotation, normalize pixel format, set framerate
+        filters.append(
+            f"[{i}:v:0]scale=1920:1080:force_original_aspect_ratio=decrease,"
+            f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,"
+            f"format=yuv420p[v{i}]"
+        )
+        filters.append(f"[{i}:a:0]aformat=sample_rates=48000:channel_layouts=stereo[a{i}]")
+
+    # concat needs interleaved: [v0][a0][v1][a1]...
+    interleaved = "".join(f"[v{i}][a{i}]" for i in range(num_segments))
+    filters.append(f"{interleaved}concat=n={num_segments}:v=1:a=1[outv][outa]")
+
+    return ";".join(filters)
+
+
+def _extract_and_concat(segments: list[tuple[str, float, float]], output_path: str):
+    """Extract segments from source videos and concatenate in one FFmpeg call."""
+    if not segments:
+        raise ValueError("No segments to process")
+
+    cmd = ["ffmpeg", "-y"]
+
+    # Add inputs with trim points
+    for src_file, start, end in segments:
+        cmd.extend(["-ss", str(start), "-t", str(end - start), "-i", src_file])
+
+    # Build and add filter_complex
+    filter_str = _build_filter_complex(len(segments))
+    cmd.extend([
+        "-filter_complex", filter_str,
+        "-map", "[outv]", "-map", "[outa]",
         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
         output_path,
-    ]
+    ])
+
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg segment extraction failed: {result.stderr[-500:]}")
-
-
-def _concat_segments(segment_files: list[str], output_path: str):
-    """Concatenate segment files using FFmpeg concat demuxer."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        for seg_file in segment_files:
-            f.write(f"file '{seg_file}'\n")
-        concat_list = f.name
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", concat_list,
-        "-c", "copy",
-        "-movflags", "+faststart",
-        output_path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    Path(concat_list).unlink(missing_ok=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg concat failed: {result.stderr[-500:]}")
+        raise RuntimeError(f"FFmpeg failed: {result.stderr[-1000:]}")
 
 
 def execute_edit(plan: EditPlan, output_path: str) -> str:
@@ -68,30 +74,17 @@ def execute_edit(plan: EditPlan, output_path: str) -> str:
         raise ValueError("Edit plan has no segments to keep")
 
     duration = _get_duration(plan.source_file)
-    tmp_dir = Path(tempfile.mkdtemp())
-    segment_files = []
+    segments = []
+    for seg in keep_segments:
+        start = max(0, seg.start)
+        end = min(duration, seg.end)
+        if end > start:
+            segments.append((plan.source_file, start, end))
 
-    try:
-        for i, seg in enumerate(keep_segments):
-            start = max(0, seg.start)
-            end = min(duration, seg.end)
-            if end > start:
-                seg_path = str(tmp_dir / f"seg_{i:04d}.mp4")
-                _extract_segment(plan.source_file, start, end, seg_path)
-                segment_files.append(seg_path)
+    if not segments:
+        raise ValueError("No valid segments after timestamp validation")
 
-        if not segment_files:
-            raise ValueError("No valid segments after timestamp validation")
-
-        if len(segment_files) == 1:
-            Path(segment_files[0]).rename(output_path)
-        else:
-            _concat_segments(segment_files, output_path)
-    finally:
-        for f in segment_files:
-            Path(f).unlink(missing_ok=True)
-        tmp_dir.rmdir()
-
+    _extract_and_concat(segments, output_path)
     return output_path
 
 
@@ -102,30 +95,17 @@ def execute_stitch(plan: StitchPlan, output_path: str) -> str:
     durations = {i: _get_duration(f) for i, f in enumerate(plan.source_files)}
     sorted_segments = sorted(plan.segments, key=lambda s: s.order)
 
-    tmp_dir = Path(tempfile.mkdtemp())
-    segment_files = []
+    segments = []
+    for seg in sorted_segments:
+        src_file = plan.source_files[seg.source_index]
+        src_duration = durations[seg.source_index]
+        start = max(0, seg.start)
+        end = min(src_duration, seg.end)
+        if end > start:
+            segments.append((src_file, start, end))
 
-    try:
-        for i, seg in enumerate(sorted_segments):
-            src_file = plan.source_files[seg.source_index]
-            src_duration = durations[seg.source_index]
-            start = max(0, seg.start)
-            end = min(src_duration, seg.end)
-            if end > start:
-                seg_path = str(tmp_dir / f"seg_{i:04d}.mp4")
-                _extract_segment(src_file, start, end, seg_path)
-                segment_files.append(seg_path)
+    if not segments:
+        raise ValueError("No valid segments to stitch")
 
-        if not segment_files:
-            raise ValueError("No valid segments to stitch")
-
-        if len(segment_files) == 1:
-            Path(segment_files[0]).rename(output_path)
-        else:
-            _concat_segments(segment_files, output_path)
-    finally:
-        for f in segment_files:
-            Path(f).unlink(missing_ok=True)
-        tmp_dir.rmdir()
-
+    _extract_and_concat(segments, output_path)
     return output_path
