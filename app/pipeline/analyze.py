@@ -1,4 +1,5 @@
 import json
+import re
 import time
 
 import anthropic
@@ -30,23 +31,20 @@ def _call_claude(system_prompt: str, user_prompt: str, api_key: str) -> str:
 
 
 def _parse_json(text: str) -> dict:
-    """Extract and parse JSON from Claude's response."""
+    """Extract and parse JSON from Claude's response, handling text preamble."""
     text = text.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        json_lines = []
-        in_block = False
-        for line in lines:
-            if line.startswith("```") and not in_block:
-                in_block = True
-                continue
-            elif line.startswith("```") and in_block:
-                break
-            elif in_block:
-                json_lines.append(line)
-        text = "\n".join(json_lines)
 
-    return json.loads(text)
+    # Try extracting from markdown code block first
+    code_block = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
+    if code_block:
+        return json.loads(code_block.group(1))
+
+    # Try finding the first { ... } JSON object
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        return json.loads(match.group(0))
+
+    raise ValueError(f"No JSON found in Claude response:\n{text[:500]}")
 
 
 def analyze_for_short(
