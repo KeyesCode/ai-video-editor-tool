@@ -8,7 +8,7 @@ from app.models.schemas import JobStatus
 from app.pipeline.audio import extract_audio
 from app.pipeline.transcribe import transcribe
 from app.pipeline.analyze import analyze_for_short, analyze_for_stitch, analyze_for_longform
-from app.pipeline.edit import execute_edit, execute_stitch
+from app.pipeline.edit import execute_edit, execute_stitch, _get_duration
 
 
 class PipelineRunner:
@@ -85,8 +85,9 @@ class PipelineRunner:
             ]
 
             self._update(job, "analyzing", 0.5, callback)
+            video_durations = [_get_duration(v) for v in video_paths]
             plan = analyze_for_stitch(
-                transcripts, video_paths, self.config.anthropic_api_key,
+                transcripts, video_paths, video_durations, self.config.anthropic_api_key,
                 output_type, self.config.min_short_duration, self.config.max_short_duration,
             )
 

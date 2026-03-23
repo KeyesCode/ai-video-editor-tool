@@ -1,6 +1,7 @@
 import json
 import re
 import time
+from pathlib import Path
 
 import anthropic
 
@@ -68,13 +69,22 @@ def analyze_for_short(
 def analyze_for_stitch(
     transcripts: list[Transcript],
     source_files: list[str],
+    video_durations: list[float],
     api_key: str,
     output_type: str = "longform",
     min_short: int = 30,
     max_short: int = 60,
 ) -> StitchPlan:
     """Analyze multiple transcripts and get Claude's stitch plan."""
-    prompt = stitch.build_prompt(transcripts, output_type, min_short, max_short)
+    filenames = [Path(f).name for f in source_files]
+    prompt = stitch.build_prompt(
+        transcripts,
+        video_durations=video_durations,
+        filenames=filenames,
+        output_type=output_type,
+        min_short=min_short,
+        max_short=max_short,
+    )
     response = _call_claude(stitch.SYSTEM_PROMPT, prompt, api_key)
     data = _parse_json(response)
 
