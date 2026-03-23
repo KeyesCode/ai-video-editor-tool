@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CookVid - AI Video Editor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
+        .container { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+        h1 { font-size: 2rem; margin-bottom: 8px; color: #fff; }
+        .subtitle { color: #888; margin-bottom: 40px; }
+        .cards { display: grid; gap: 20px; }
+        .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 24px; transition: border-color 0.2s; }
+        .card:hover { border-color: #444; }
+        .card h2 { font-size: 1.2rem; margin-bottom: 8px; color: #fff; }
+        .card p { color: #888; font-size: 0.9rem; margin-bottom: 16px; }
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-size: 0.85rem; color: #aaa; margin-bottom: 6px; }
+        input[type="file"] { width: 100%; padding: 10px; background: #111; border: 1px dashed #333; border-radius: 8px; color: #ccc; cursor: pointer; }
+        input[type="file"]:hover { border-color: #555; }
+        select { width: 100%; padding: 10px; background: #111; border: 1px solid #333; border-radius: 8px; color: #ccc; }
+        .btn { display: inline-block; padding: 10px 24px; background: #e04e2a; color: #fff; border: none; border-radius: 8px; font-size: 0.95rem; cursor: pointer; margin-top: 8px; transition: background 0.2s; }
+        .btn:hover { background: #c43d1e; }
+        .btn:disabled { background: #555; cursor: not-allowed; }
+        .status { margin-top: 16px; padding: 12px; background: #111; border-radius: 8px; display: none; }
+        .status.active { display: block; }
+        .status .label { font-size: 0.85rem; color: #aaa; }
+        .status .value { font-size: 0.95rem; color: #fff; margin-top: 4px; }
+        .progress-bar { width: 100%; height: 6px; background: #222; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #e04e2a; border-radius: 3px; transition: width 0.3s; }
+        a.download { display: inline-block; margin-top: 10px; color: #e04e2a; text-decoration: none; font-weight: 600; }
+        a.download:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CookVid</h1>
+        <p class="subtitle">AI-powered cooking video editor</p>
+
+        <div class="cards">
+            <!-- Cut to Short -->
+            <div class="card">
+                <h2>Cut to Short</h2>
+                <p>Upload a long-form cooking video and AI will create a 30-60 second short.</p>
+                <form id="form-short" onsubmit="submitJob(event, 'cut-to-short', 'form-short')">
+                    <div class="form-group">
+                        <label>Video File</label>
+                        <input type="file" name="video" accept="video/*" required>
+                    </div>
+                    <button class="btn" type="submit">Create Short</button>
+                </form>
+                <div class="status" id="status-form-short">
+                    <div class="label">Status</div>
+                    <div class="value" id="msg-form-short">Uploading...</div>
+                    <div class="progress-bar"><div class="progress-fill" id="bar-form-short" style="width:0%"></div></div>
+                    <div id="dl-form-short"></div>
+                </div>
+            </div>
+
+            <!-- Stitch Videos -->
+            <div class="card">
+                <h2>Stitch Videos</h2>
+                <p>Upload multiple cooking videos to combine into one cohesive video.</p>
+                <form id="form-stitch" onsubmit="submitJob(event, 'stitch', 'form-stitch')">
+                    <div class="form-group">
+                        <label>Video Files (select multiple)</label>
+                        <input type="file" name="videos" accept="video/*" multiple required>
+                    </div>
+                    <div class="form-group">
+                        <label>Output Type</label>
+                        <select name="output_type">
+                            <option value="longform">Long-form</option>
+                            <option value="short">Short (30-60s)</option>
+                        </select>
+                    </div>
+                    <button class="btn" type="submit">Stitch Videos</button>
+                </form>
+                <div class="status" id="status-form-stitch">
+                    <div class="label">Status</div>
+                    <div class="value" id="msg-form-stitch">Uploading...</div>
+                    <div class="progress-bar"><div class="progress-fill" id="bar-form-stitch" style="width:0%"></div></div>
+                    <div id="dl-form-stitch"></div>
+                </div>
+            </div>
+
+            <!-- Edit Long-form -->
+            <div class="card">
+                <h2>Edit Long-form</h2>
+                <p>Upload a cooking video and AI will clean it up — removing dead air, filler, and bad takes.</p>
+                <form id="form-edit" onsubmit="submitJob(event, 'edit-longform', 'form-edit')">
+                    <div class="form-group">
+                        <label>Video File</label>
+                        <input type="file" name="video" accept="video/*" required>
+                    </div>
+                    <button class="btn" type="submit">Edit Video</button>
+                </form>
+                <div class="status" id="status-form-edit">
+                    <div class="label">Status</div>
+                    <div class="value" id="msg-form-edit">Uploading...</div>
+                    <div class="progress-bar"><div class="progress-fill" id="bar-form-edit" style="width:0%"></div></div>
+                    <div id="dl-form-edit"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const STATUS_LABELS = {
+            pending: 'Queued...',
+            extracting_audio: 'Extracting audio...',
+            transcribing: 'Transcribing with AI...',
+            analyzing: 'AI analyzing video...',
+            editing: 'Applying edits...',
+            complete: 'Complete!',
+            failed: 'Failed',
+        };
+
+        async function submitJob(e, endpoint, formId) {
+            e.preventDefault();
+            const form = document.getElementById(formId);
+            const statusEl = document.getElementById('status-' + formId);
+            const msgEl = document.getElementById('msg-' + formId);
+            const barEl = document.getElementById('bar-' + formId);
+            const dlEl = document.getElementById('dl-' + formId);
+
+            statusEl.classList.add('active');
+            msgEl.textContent = 'Uploading...';
+            barEl.style.width = '0%';
+            dlEl.innerHTML = '';
+
+            const formData = new FormData(form);
+            const btn = form.querySelector('.btn');
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/jobs/' + endpoint, { method: 'POST', body: formData });
+                const data = await res.json();
+                const jobId = data.job_id;
+
+                const poll = setInterval(async () => {
+                    const statusRes = await fetch('/api/jobs/' + jobId);
+                    const job = await statusRes.json();
+
+                    msgEl.textContent = STATUS_LABELS[job.status] || job.status;
+                    barEl.style.width = (job.progress * 100) + '%';
+
+                    if (job.status === 'failed') {
+                        msgEl.textContent = 'Failed: ' + (job.error || 'Unknown error');
+                        clearInterval(poll);
+                        btn.disabled = false;
+                    } else if (job.status === 'complete') {
+                        dlEl.innerHTML = '<a class="download" href="/api/jobs/' + jobId + '/download">Download Video</a>';
+                        clearInterval(poll);
+                        btn.disabled = false;
+                    }
+                }, 2000);
+            } catch (err) {
+                msgEl.textContent = 'Upload failed: ' + err.message;
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
