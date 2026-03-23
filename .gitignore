@@ -18,3 +18,5 @@ env/
 .vscode/
 *.swp
 *.swo
+
+input/*

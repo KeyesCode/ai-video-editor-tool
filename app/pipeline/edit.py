@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from moviepy.editor import VideoFileClip, concatenate_videoclips
+from moviepy import VideoFileClip, concatenate_videoclips
 
 from app.models.schemas import EditPlan, StitchPlan
 
@@ -22,7 +22,7 @@ def execute_edit(plan: EditPlan, output_path: str) -> str:
             start = max(0, seg.start)
             end = min(clip.duration, seg.end)
             if end > start:
-                subclips.append(clip.subclip(start, end))
+                subclips.append(clip.subclipped(start, end))
 
         if not subclips:
             raise ValueError("No valid subclips after timestamp validation")
@@ -58,7 +58,7 @@ def execute_stitch(plan: StitchPlan, output_path: str) -> str:
             start = max(0, seg.start)
             end = min(src.duration, seg.end)
             if end > start:
-                clips.append(src.subclip(start, end))
+                clips.append(src.subclipped(start, end))
 
         if not clips:
             raise ValueError("No valid segments to stitch")
